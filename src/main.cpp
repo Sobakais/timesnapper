@@ -1,62 +1,108 @@
-#include <cmath>
-#include <cstddef>
+#include <mpg123.h>
+
+#include <AudioProcessor.hpp>
+#include <cstdlib>
+#include <cxxopts.hpp>
 #include <iostream>
-#include <miniaudio/miniaudio.c>
+#include <utils.hpp>
 
-const int SAMPLE_RATE = 44100;
-const int AUDIO_CHANNELS = 2;
+Config parse_args(int argc, char *argv[], bool &by_amount) {
+  Config cfg;
+  cxxopts::Options options(
+      "timesnapper",
+      "Tool to make timestamps that better fit speech lines in an MP3 file.\n"
+      "Amount output will be by default.\n");
+  options.positional_help("<inputfile>.mp3").show_positional_help();
 
-int main(int argc, char** argv) {
-  if (argc < 2) {
-    printf("No input file.\n");
-    return -1;
-  }
-  if (argc > 2) {
-    printf("Too many arguments provided.\n");
-    return -1;
-  }
-  const char* filepath = argv[1];
+  options.add_options()(
+      "s,signal_threshold",
+      "Minimum normalized amplitude to be considered as signal (default: 0.18)",
+      cxxopts::value<float>())(
+      "w,window_size",
+      "Size of window in running sum smoother (default: 2000 frames)",
+      cxxopts::value<size_t>())(
+      "g,min_gap",
+      "Minimum number of frames between timestamps to be considered as "
+      "possible timestamp (default: 5000 frames)",
+      cxxopts::value<size_t>())("t,timestamps_threshold",
+                                "Minimum framecount threshold to include "
+                                "timestamp",
+                                cxxopts::value<size_t>())(
+      "n,count",
+      "Number of timestamps to extract (incompatible with "
+      "--timestamps_threshold)",
+      cxxopts::value<size_t>())("d,delimiter",
+                                "Delimiter for output tables (default: ',')",
+                                cxxopts::value<std::string>())(
+      "o,output", "Output CSV file path (default: ts.csv)",
+      cxxopts::value<std::string>())(
+      "input", "Input file path", cxxopts::value<std::string>())("h,help",
+                                                                 "Print usage");
 
-  ma_result result;
+  options.parse_positional({"input", "output"});
+  auto result = options.parse(argc, argv);
 
-  ma_engine engine;
-  ma_engine_config engineConfig = ma_engine_config_init();
-  engineConfig.noDevice = MA_TRUE;
-  engineConfig.channels = AUDIO_CHANNELS;
-  engineConfig.sampleRate = SAMPLE_RATE;
-
-  result = ma_engine_init(&engineConfig, &engine);
-  if (result != MA_SUCCESS) {
-    std::cerr << "Could not initialize engine\n";
-    return result;
-  }
-
-  ma_sound sound;
-  result = ma_sound_init_from_file(&engine, filepath, MA_SOUND_FLAG_DECODE,
-                                   NULL, NULL, &sound);
-  if (result != MA_SUCCESS) {
-    std::cerr << "Could not initialize sound\n";
-    return result;
-  }
-
-  ma_channel_converter converter;
-  ma_channel_converter_config config =
-      ma_channel_converter_config_init(ma_format_f32, AUDIO_CHANNELS, NULL, 1,
-                                       NULL, ma_channel_mix_mode_default);
-
-  result = ma_channel_converter_init(&config, NULL, &converter);
-  if (result != MA_SUCCESS) {
-    std::cerr << "Could not initialize converter\n";
+  if (result.count("count") && result.count("timestamps_threshold")) {
+    std::cout << "For work specify amount of timestamps OR threshold that will "
+                 "be aplied to pick them, not both.";
+    exit(-1);
   }
 
-  ma_uint64 length;
-  ma_sound_get_length_in_pcm_frames(&sound, &length);
+  if (result.count("timestamps_threshold")) {
+    by_amount = false;
+    cfg.timestamps_threshold = result["timestamps_threshold"].as<size_t>();
+  }
+  if (result.count("count")) {
+    cfg.amount_of_timestamps = result["count"].as<size_t>();
+  }
+  if (result.count("window_size")) {
+    cfg.wave_smoother_window_size = result["window_size"].as<size_t>();
+  }
+  if (result.count("min_gap")) {
+    cfg.time_marker_min_gap_size = result["min_gap"].as<size_t>();
+  }
+  if (result.count("delimiter")) {
+    cfg.table_delimiter = result["delimiter"].as<std::string>();
+  }
 
-  result =
-      ma_channel_converter_process_pcm_frames(&converter, NULL, &sound, length);
-  if (result != MA_SUCCESS) {
-    std::cerr << "Error during channels conversion\n";
-    return result;
+  if (result.count("help")) {
+    std::cout << options.help() << std::endl;
+    exit(0);
+  }
+
+  if (!result.count("input")) {
+    std::cout << "Not enough arguments.\nUsage: timesnap [options] "
+                 "<inputfile>.mp3\n   For diplaying help use: timesnap -h\n";
+    exit(-1);
+  } else {
+    cfg.input_path = result["input"].as<std::string>();
+  }
+
+  if (result.count("output")) {
+    cfg.output_path = result["output"].as<std::string>();
+  }
+
+  return cfg;
+}
+
+int main(int argc, char *argv[]) {
+  bool by_amount = true;
+  Config cfg = parse_args(argc, argv, by_amount);
+  AudioProcessor proc(cfg);
+
+  try {
+    proc.startProcessor();
+  } catch (const std::exception &ex) {
+    std::cerr << "Exception: " << ex.what() << std::endl;
+    return EXIT_FAILURE;
+  }
+
+  if (by_amount) {
+    std::cout << "By amount\n";
+    proc.processTimestampsCount();
+  } else {
+    std::cout << "By TH\n";
+    proc.processTimestampsThreashold();
   }
 
   return 0;

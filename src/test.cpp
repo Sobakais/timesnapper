@@ -4,24 +4,13 @@
 #include <cstddef>
 #include <fstream>
 #include <iostream>
-#include <queue>
 #include <utility>
+#include <utils.cpp>
 #include <vector>
 
 static float SIGNAL_THREASHOLD = 0.2f;
 static size_t WAVE_SMOOTHER_WINDOW_SIZE = 400;
 static size_t GAP_MINIMUM_FRAME_SIZE = 1000;
-
-struct Compare {
-  bool operator()(const std::pair<size_t, size_t> &lhs,
-                  const std::pair<size_t, size_t> &rhs) {
-    return lhs.second < rhs.second;
-  }
-};
-
-using timestampPQ =
-    std::priority_queue<std::pair<size_t, size_t>,
-                        std::vector<std::pair<size_t, size_t>>, Compare>;
 
 std::pair<std::vector<short>, long> readToRaw(const std::string &filename,
                                               mpg123_handle *mh) {
