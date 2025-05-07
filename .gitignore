@@ -30,3 +30,11 @@
 *.exe
 *.out
 *.app
+
+# Media files
+media/
+tmp/
+
+# build dir
+build/
+.cache/
